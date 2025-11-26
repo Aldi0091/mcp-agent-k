@@ -1,4 +1,4 @@
-# My MCP Server
+# Agent-K MCP Server
 
 Minimal **Model Context Protocol (MCP)** server built with **Node.js + TypeScript**.  
 Exposes a few tools and a dynamic resource over HTTP `/mcp`.
@@ -26,8 +26,8 @@ Built using the official MCP TypeScript SDK. :contentReference[oaicite:3]{index=
 ## Installation
 
 ```bash
-git clone <your-repo-url> my-mcp-server
-cd my-mcp-server
+git clone <your-repo-url> mcp-agent-k
+cd mcp-agent-k
 
 # install dependencies
 npm install
