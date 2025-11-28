@@ -1,17 +1,19 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import * as z from "zod/v4";
 import {
   McpServer,
-  ResourceTemplate
+  ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
+// --- MCP server instance -----------------------------------------------------
 
 const mcpServer = new McpServer({
   name: "my-mcp-server",
-  version: "0.1.0"
+  version: "0.1.0",
 });
 
+// --- Tools -------------------------------------------------------------------
 
 mcpServer.registerTool(
   "add_numbers",
@@ -19,12 +21,12 @@ mcpServer.registerTool(
     title: "Add Numbers",
     description: "Add two numbers and return the sum.",
     inputSchema: {
-      a: z.number(),
-      b: z.number()
+      a: z.number().describe("The first number to add"),
+      b: z.number().describe("The second number to add"),
     },
     outputSchema: {
-      result: z.number()
-    }
+      result: z.number().describe("The sum of a and b"),
+    },
   },
   async ({ a, b }) => {
     const output = { result: a + b };
@@ -33,10 +35,10 @@ mcpServer.registerTool(
       content: [
         {
           type: "text",
-          text: JSON.stringify(output)
-        }
+          text: JSON.stringify(output),
+        },
       ],
-      structuredContent: output
+      structuredContent: output,
     };
   }
 );
@@ -47,33 +49,35 @@ mcpServer.registerTool(
     title: "Echo Text",
     description: "Return the same text back. Useful for debugging.",
     inputSchema: {
-      text: z.string()
+      text: z.string().min(1).describe("Text to be echoed back"),
     },
     outputSchema: {
-      echoed: z.string(),
-      length: z.number()
-    }
+      echoed: z.string().describe("Echoed text"),
+      length: z.number().describe("Length of the echoed text"),
+    },
   },
   async ({ text }) => {
     const output = {
       echoed: text,
-      length: text.length
+      length: text.length,
     };
 
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(output)
-        }
+          text: JSON.stringify(output),
+        },
       ],
-      structuredContent: output
+      structuredContent: output,
     };
   }
 );
 
+// --- Resources ---------------------------------------------------------------
+
 const greetingTemplate = new ResourceTemplate("greeting://{name}", {
-  list: undefined
+  list: undefined,
 });
 
 mcpServer.registerResource(
@@ -81,38 +85,70 @@ mcpServer.registerResource(
   greetingTemplate,
   {
     title: "Greeting Resource",
-    description: "Returns a personalized greeting for a given name."
+    description: "Returns a personalized greeting for a given name.",
+    mimeType: "text/plain",
   },
   async (uri, { name }) => {
-    const message = `Hello, ${name}! This greeting comes from the MCP server.`;
+    const safeName = name || "stranger";
+    const message = `Hello, ${safeName}! This greeting comes from the MCP server.`;
 
     return {
       contents: [
         {
           uri: uri.href,
-          text: message
-        }
-      ]
+          text: message,
+        },
+      ],
     };
   }
 );
 
+// --- Express + Streamable HTTP transport ------------------------------------
+
 const app = express();
-app.use(express.json());
 
-// MCP endpoint: POST /mcp
-app.post("/mcp", async (req, res) => {
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true
-  });
+// Некоторые клиенты любят `type: "*/*"`, но можно и просто `express.json()`
+app.use(
+  express.json({
+    limit: "1mb",
+  })
+);
 
-  res.on("close", () => {
-    transport.close();
-  });
+// MCP endpoint: POST /mcp  (stateless mode)
+app.post("/mcp", async (req: Request, res: Response) => {
+  try {
+    const transport = new StreamableHTTPServerTransport({
+      // stateless: новый транспорт на каждый запрос
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
 
-  await mcpServer.connect(transport);
-  await transport.handleRequest(req, res, req.body);
+    res.on("close", () => {
+      transport.close();
+    });
+
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error("Error handling MCP request:", error);
+
+    if (!res.headersSent) {
+      // JSON-RPC совместимый ответ об ошибке
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32603,
+          message: "Internal server error",
+        },
+        id: null,
+      });
+    }
+  }
+});
+
+// В stateless-паттерне GET /mcp не поддерживается
+app.get("/mcp", (_req: Request, res: Response) => {
+  res.status(405).end();
 });
 
 const port = parseInt(process.env.PORT || "3000", 10);
